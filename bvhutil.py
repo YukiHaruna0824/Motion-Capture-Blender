@@ -1,4 +1,7 @@
 import bpy
+import os
+import re
+
 from mathutils import Vector,Matrix
 import enum
 
@@ -11,7 +14,7 @@ class Channel(enum.IntEnum):
     YROTATION = 5
 
 class Offset():
-    def __init__(self, x, y, z):
+    def __init__(self, x = 0, y = 0, z = 0):
         self.x = x
         self.y = y
         self.z = z
@@ -26,6 +29,16 @@ class Joint():
         self._channel_data = []
         self._localpos = []
         self._localrot = []
+
+    def Copy(self, otherJoint):
+        self._parent = otherJoint.Parent
+        self._name = otherJoint.Name
+        self._offset = otherJoint.Offset
+        self._channels_order = otherJoint.Channels_order
+        self._children = otherJoint.Children
+        self._channel_data = otherJoint.Channel_data
+        self._localpos = otherJoint.LocalPos
+        self._localrot = otherJoint.LocalRot
 
     @property 
     def Parent(self):
@@ -173,7 +186,33 @@ class Bvh():
         for i in range(len(startJoint.Children)):
             self.Calculate(startJoint.Children[i])
 
-class KeyWord:
+    def GetJointInfo(self):
+        for joint in self._joints:
+            print("Joint : " + joint.Name)
+            if not joint.Parent == None:
+                print("Joint Parent: " + joint.Parent.Name)
+
+            print("Joint Offset: " + joint.Offset.x + " " + joint.Offset.y + " " + joint.Offset.z)
+
+            print("Joint Channel order : ")
+            for i in range(joint.num_channels()):
+                print(str(joint.Channels_order[i]))
+
+            print("Joint Children : ")
+            for child in joint._children:
+                print(child.Name)
+
+            if not joint.Name == KeyWord.kEndSite:
+                for i in range(len(joint.Channel_data)):
+                    print('Frame' + str(i) + ' :', end= ' ')
+                    for j in range(len(joint.Channel_data[i])):
+                        if not j == len(joint.Channel_data[i]) - 1:
+                            print(str(joint.Channel_data[i][j]), end= ' ')
+                        else:
+                            print(str(joint.Channel_data[i][j]))
+            print('---------------------------------------------')
+
+class KeyWord():
     kChannels = "CHANNELS"
     kEnd = "End"
     kEndSite = "End Site"
@@ -197,8 +236,249 @@ class BvhParser():
         self._tokens = []
         self._tokenIndex = 0
         self._bvh = None
+        self._debug = False
 
     def GetTokenInfo(self, path):
-
+        if os.path.isfile(path):
+            f = open(path, 'r')
+            text = f.read()
+            tokens = re.split(' |\t|\n', text)
+            for token in tokens:
+                if not token == '':
+                    self._tokens.append(token)
+        else:
+            if self._debug:
+                print("File Open Failed")
 
     def Parse(self, bvh):
+        self._bvh = bvh
+        token = self.GetToken()
+        if token == KeyWord.kHierarchy:
+            ret = self.Parse_Hierarchy()
+            if ret < 0:
+                if self._debug:
+                    print('Parsing Hierarchy Error!')
+                return ret
+        else:
+            if self._debug:
+                print('Bad structure of .bvh file. ' + KeyWord.kHierarchy + ' should be on the top of the file');
+            return -1;
+
+        if self._debug:
+            print('Successfully parse file!')
+        return 0
+
+    def Parse_Hierarchy(self):
+        if self.CheckTokenIndex():
+            token = self.GetToken()
+            if token == KeyWord.kRoot:
+                rootJoint = Joint()
+                emptyJoint = None
+                ret = self.Parse_Joint(emptyJoint, rootJoint)
+                if ret < 0:
+                    if self._debug:
+                        print('Parsing Joint Error!')
+                    return ret
+                self._bvh.Root_joint = rootJoint
+            else:
+                if self._debug:
+                    print('Bad structure of .bvh file. Expected ' + KeyWord.kRoot + ", but found " + token)
+                return -1
+
+            #Parsing Motion
+            if not self.CheckTokenIndex():
+                return -1
+            token = self.GetToken()
+            if token == KeyWord.kMotion:
+                ret = self.Parsing_Motion()
+                if ret < 0:
+                    if self._debug:
+                        print('Parsing Motion Error!')
+                    return ret
+            else:
+                if self._debug:
+                    print('Bad structure of .bvh file. Expected ' + KeyWord.kMotion + ', but found ' + token)
+                    return -1
+        return 0
+        
+    def Parse_Joint(self, parent, parsed):
+        if not self.CheckTokenIndex():
+            return -1
+        
+        #Consuming '{'
+        name = self.GetToken(2)
+        joint = Joint()
+        joint.Name = name
+        joint.Parent = parent
+
+        if self._debug:
+            print('Joint name : ' + joint.Name)
+
+        if not self.CheckTokenIndex():
+            return -1
+
+        #get offset
+        token = self.GetToken()
+        if token == KeyWord.kOffset:
+            offset = []
+            for i in range(3):
+                if self.CheckTokenIndex():
+                    offset.append(self.GetToken())
+                else:
+                    if self._debug:
+                        print('Failure Parsing ' + joint.Name + ' Offset Error!')
+                        return -1
+            joint.Offset = Offset(offset[0], offset[1], offset[2])
+        else:
+            if self._debug:
+                print('Bad structure of .bvh file. Expected ' + KeyWord.kOffset + ", but found " + token)
+                return -1
+
+        if not self.CheckTokenIndex():
+            return -1
+        
+        #Channel Parsing
+        token = self.GetToken()
+        if token == KeyWord.kChannels:
+            ret = self.Parsing_Channel_Order(joint)
+            if ret < 0:
+                if self._debug:
+                    print('Parsing Channel Failed!')
+                return ret
+        else:
+            if self._debug:
+                print('Bad structure of .bvh file. Expected ' + KeyWord.kChannels + ', but found ' + token);
+            return -1; 
+
+        self._bvh.Add_joint(joint)
+
+        #Parsing Children Joint
+        children = []
+        while self.CheckTokenIndex():
+            token = self.GetToken()
+            if token == KeyWord.kJoint:
+                child = Joint()
+                ret = self.Parse_Joint(joint, child)
+                children.append(child)
+            elif token == KeyWord.kEnd:
+                #Consuming 'Site' and '{'
+                self._tokenIndex = self._tokenIndex + 2
+
+                endJoint = Joint()
+                endJoint.Parent = joint
+                endJoint.Name = KeyWord.kEndSite
+                children.append(endJoint)
+
+                if not self.CheckTokenIndex():
+                    return -1
+                token = self.GetToken()
+
+                if token == KeyWord.kOffset:
+                    offset = []
+                    for i in range(3):
+                        if self.CheckTokenIndex():
+                            offset.append(self.GetToken())
+                        else:
+                            if self._debug:
+                                print('Failure Parsing ' + joint.Name + ' Offset Error!')
+                                return -1
+                    endJoint.Offset = Offset(offset[0], offset[1], offset[2])
+                else:
+                    if self._debug:
+                        print('Bad structure of .bvh file. Expected ' + KeyWord.kOffset + ", but found " + token)
+                        return -1
+            
+                #Consuming '}'
+                self._tokenIndex = self._tokenIndex + 1
+                self._bvh.Add_joint(endJoint)
+            elif token == '}':
+                joint.Children = children
+                #parsed = joint
+                parsed.Copy(joint)
+                return 0
+
+        if self._debug:
+            print('Cannot parse joint, unexpected end of file. Last token : ' + token);
+        return -1;
+
+    def Parsing_Channel_Order(self, joint):
+        if not self.CheckTokenIndex():
+            return -1
+        num = int(self.GetToken())
+
+        channels = []
+        for i in range(num):
+            if self.CheckTokenIndex():
+                token = self.GetToken()
+                if token == KeyWord.kXpos:
+                    channels.append(Channel.XPOSITION)
+                elif token == KeyWord.kYpos:
+                    channels.append(Channel.YPOSITION)
+                elif token == KeyWord.kZpos:
+                    channels.append(Channel.ZPOSITION)
+                elif token == KeyWord.kXrot:
+                    channels.append(Channel.XROTATION)
+                elif token == KeyWord.kYrot:
+                    channels.append(Channel.YROTATION)
+                elif token == KeyWord.kZrot:
+                    channels.append(Channel.ZROTATION)
+                else:
+                    if self._debug:
+                        print('Invalid Channel!')
+                    return -1
+            else:
+                return -1
+
+        joint.Channels_order = channels
+        return 0
+
+    def Parsing_Motion(self):
+        if not self.CheckTokenIndex():
+            return -1
+        token = self.GetToken()
+        if token == KeyWord.kFrames:
+            if not self.CheckTokenIndex():
+                return -1
+            self._bvh.Num_frames = int(self.GetToken())
+        else:
+            if self._debug:
+                print('Bad structure of .bvh file. Expected ' + KeyWord.kFrames + ', but found ' + token)
+            return -1
+
+        if not self.CheckTokenIndex():
+            return -1
+        
+        #Consuming 'Time:'
+        token = self.GetToken(2)
+        if token == KeyWord.kFrame:
+            if not self.CheckTokenIndex():
+                return -1
+            self._bvh.Frame_time = float(self.GetToken())
+            for i in range(self._bvh.Num_frames):
+                for joint in self._bvh.Joints:
+                    data = []
+                    for j in range(joint.num_channels()):
+                        if self.CheckTokenIndex():
+                            num = float(self.GetToken())
+                            data.append(num)
+                        else:
+                            return -1
+                    joint.Add_motion_data(data)
+        else:
+            if self._debug:
+                print('Bad structure of .bvh file. Expected ' + KeyWord.kFrame + ', but found ' + token)
+            return -1
+        return 0
+
+    def GetToken(self, offset = 1):
+        token = self._tokens[self._tokenIndex]
+        self._tokenIndex = self._tokenIndex + offset
+        return token
+
+    def CheckTokenIndex(self):
+        if self._tokenIndex >= len(self._tokens):
+            if self._debug:
+                print('Parsing Error!')
+            return False
+        else:
+            return True

@@ -1,5 +1,7 @@
 import bpy
 import os
+from .bvhutil import *
+
 
 class ImportBvh(bpy.types.Operator):
     """Add Bvh File"""
@@ -11,11 +13,19 @@ class ImportBvh(bpy.types.Operator):
     def invoke(self, context, event):
         context.window_manager.fileselect_add(self) 
         return {'RUNNING_MODAL'}
+
     def execute(self, context):
         scene = context.scene
         pref = scene.setting
         pref.bvhFilePath = os.path.basename(self.filepath)
-        return {'FINISHED'} 
+
+        bvh = Bvh()
+        bp = BvhParser()
+        bp.GetTokenInfo(self.filepath)
+        if bp.Parse(bvh) == 0:
+            bvh.GetJointInfo()
+        return {'FINISHED'}
+
 
 
 

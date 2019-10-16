@@ -1,6 +1,7 @@
 import bpy
 from bpy.props import *
 
+#註冊共用變數class
 class MyPreferece(bpy.types.PropertyGroup):
     bvhFilePath = StringProperty(name = 'bvh Path', description = "bvh Path")
 
