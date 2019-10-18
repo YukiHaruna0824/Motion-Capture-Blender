@@ -12,7 +12,7 @@
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
 
 bl_info = {
-    "name" : "Motion-Capture",
+    "name" : "Motion-Capture-Blender",
     "author" : "Two-Noob",
     "description" : "",
     "blender" : (2, 80, 0),

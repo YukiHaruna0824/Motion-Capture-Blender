@@ -22,6 +22,9 @@ class Test_Panel(bpy.types.Panel):
         row.prop(pref, 'bvhFilePath')
         row.operator('ldops.import_bvh', text='', icon='FILE_NEW')
 
+        row = layout.row()
+        row.operator('ldops.create_spline')
+
 
 
 def register():
