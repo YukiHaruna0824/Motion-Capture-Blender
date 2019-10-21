@@ -25,6 +25,10 @@ class Test_Panel(bpy.types.Panel):
         row = layout.row()
         row.operator('ldops.create_spline')
 
+        row = layout.row()
+        row.operator('ldops.add_point')
+        row.operator('ldops.del_point')
+
 
 
 def register():
