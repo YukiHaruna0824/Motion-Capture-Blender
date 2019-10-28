@@ -2,7 +2,8 @@ import bpy
 import os
 import re
 
-from mathutils import Vector,Matrix
+from math import radians, ceil
+from mathutils import Vector, Matrix
 import enum
 
 class Channel(enum.IntEnum):
@@ -29,6 +30,7 @@ class Joint():
         self._channel_data = []
         self._localpos = []
         self._localrot = []
+        self._object = None
 
     def Copy(self, otherJoint):
         self._parent = otherJoint.Parent
@@ -96,6 +98,13 @@ class Joint():
     def LocalRot(self, value):
         self._localrot = value
 
+    @property
+    def Object(self):
+        return self._object
+    @Object.setter
+    def Object(self, value):
+        self._object = value
+
     def num_channels(self):
         return len(self._channels_order)
 
@@ -104,15 +113,15 @@ class Joint():
 
     def Set_localpos(self, pos, frame):
         if frame > 0 and frame < len(self._localpos):
-            _localpos[frame] = pos
+            self._localpos[frame] = pos
         else:
-            _localpos.append(pos)
+            self._localpos.append(pos)
 
     def Set_localrot(self, rot, frame):
-        if frame > 0 and frame < len(_localrot):
-            _localrot[frame] = rot
+        if frame > 0 and frame < len(self._localrot):
+            self._localrot[frame] = rot
         else:
-            _localrot.append(rot)
+            self._localrot.append(rot)
 
 class Bvh():
     def __init__(self):
@@ -162,12 +171,12 @@ class Bvh():
         self._num_channels = self._num_channels + joint.num_channels()
 
     def Calculate(self, startJoint):
-        localPos = Vector(startJoint.Offset.x, startJoint.Offset.y, startJoint.Offset.z)
-        localRot = Vector(0, 0, 0)
+        localPos = Vector((startJoint.Offset.x, startJoint.Offset.y, startJoint.Offset.z))
+        localRot = Vector((0, 0, 0))
         data = startJoint.Channel_data
-        for i in range(len(self._num_frames)):
+        for i in range(self._num_frames):
             for j in range(len(startJoint.Channels_order)):
-                channel_info = startJoint.Channels_order[index]
+                channel_info = startJoint.Channels_order[j]
                 if channel_info == Channel.XPOSITION:
                     localPos.x = localPos.x + data[i][j]
                 elif channel_info == Channel.YPOSITION:
@@ -192,7 +201,7 @@ class Bvh():
             if not joint.Parent == None:
                 print("Joint Parent: " + joint.Parent.Name)
 
-            print("Joint Offset: " + joint.Offset.x + " " + joint.Offset.y + " " + joint.Offset.z)
+            print("Joint Offset: " + str(joint.Offset.x) + " " + str(joint.Offset.y) + " " + str(joint.Offset.z))
 
             print("Joint Channel order : ")
             for i in range(joint.num_channels()):
@@ -266,6 +275,13 @@ class BvhParser():
 
         if self._debug:
             print('Successfully parse file!')
+
+        #Create Children Relation
+        for joint in self._bvh.Joints:
+            parent = joint.Parent
+            if parent in self._bvh.Joints:
+                parent.Children.append(joint)
+        
         return 0
 
     def Parse_Hierarchy(self):
@@ -279,7 +295,7 @@ class BvhParser():
                     if self._debug:
                         print('Parsing Joint Error!')
                     return ret
-                self._bvh.Root_joint = rootJoint
+                self._bvh.Root_joint = self._bvh.Joints[0]
             else:
                 if self._debug:
                     print('Bad structure of .bvh file. Expected ' + KeyWord.kRoot + ", but found " + token)
@@ -323,7 +339,7 @@ class BvhParser():
             offset = []
             for i in range(3):
                 if self.CheckTokenIndex():
-                    offset.append(self.GetToken())
+                    offset.append(float(self.GetToken()))
                 else:
                     if self._debug:
                         print('Failure Parsing ' + joint.Name + ' Offset Error!')
@@ -353,13 +369,13 @@ class BvhParser():
         self._bvh.Add_joint(joint)
 
         #Parsing Children Joint
-        children = []
+        #children = []
         while self.CheckTokenIndex():
             token = self.GetToken()
             if token == KeyWord.kJoint:
                 child = Joint()
                 ret = self.Parse_Joint(joint, child)
-                children.append(child)
+                #children.append(child)
             elif token == KeyWord.kEnd:
                 #Consuming 'Site' and '{'
                 self._tokenIndex = self._tokenIndex + 2
@@ -367,7 +383,7 @@ class BvhParser():
                 endJoint = Joint()
                 endJoint.Parent = joint
                 endJoint.Name = KeyWord.kEndSite
-                children.append(endJoint)
+                #children.append(endJoint)
 
                 if not self.CheckTokenIndex():
                     return -1
@@ -377,7 +393,7 @@ class BvhParser():
                     offset = []
                     for i in range(3):
                         if self.CheckTokenIndex():
-                            offset.append(self.GetToken())
+                            offset.append(float(self.GetToken()))
                         else:
                             if self._debug:
                                 print('Failure Parsing ' + joint.Name + ' Offset Error!')
@@ -392,9 +408,9 @@ class BvhParser():
                 self._tokenIndex = self._tokenIndex + 1
                 self._bvh.Add_joint(endJoint)
             elif token == '}':
-                joint.Children = children
+                #joint.Children = children
                 #parsed = joint
-                parsed.Copy(joint)
+                #parsed.Copy(joint)
                 return 0
 
         if self._debug:
