@@ -1,9 +1,7 @@
 import bpy
 import os
 from math import radians, ceil
-#from .bvhutil import *
 from .bvhutils import *
-from . import import_bvh
 
 #管理匯入資料物件
 class DataManager():
