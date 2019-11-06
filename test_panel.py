@@ -38,8 +38,9 @@ class Test_Panel(bpy.types.Panel):
         row = layout.row()
         row.prop(pref, 'bvhRecord')
         row.operator('ldops.generate_bone', text='Generate Bone')
+        
+        row = layout.row()
         row.operator('ldops.create_spline')
-
         row = layout.row()
         row.operator('ldops.add_point')
         row.operator('ldops.del_point')

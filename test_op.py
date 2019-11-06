@@ -1,7 +1,9 @@
 import bpy
 import os
 from math import radians, ceil
-from .bvhutil import *
+#from .bvhutil import *
+from .bvhutils import *
+from . import import_bvh
 
 #管理匯入資料物件
 class DataManager():
@@ -29,23 +31,19 @@ class ImportBvh(bpy.types.Operator):
         pref.bvhFilePath = os.path.basename(self.filepath)
         name = os.path.basename(self.filepath)[:-4]
         bvh = Bvh()
-        bp = BvhParser()
-        bp.GetTokenInfo(self.filepath)
-        if bp.Parse(bvh) == 0:
-            #bvh.GetJointInfo()
-            bvh.Calculate(bvh.Root_joint)
-            index = 0
-            basename = name
-            #Avoid the same name
-            while True:
-                if name in DataManager.all_bvh.keys():
-                    index = index + 1
-                    name = basename + '_' + str(index)
-                else:
-                    break    
-            DataManager.current_bvh_name = name
-            DataManager.current_bvh_object = bvh
-            DataManager.all_bvh[name] = bvh
+        bvh.read_bvh(self.filepath)
+        index = 0
+        basename = name
+        #Avoid complicated name
+        while True:
+            if name in DataManager.all_bvh.keys():
+                index += 1
+                name = basename + '_' + str(index)
+            else:
+                break
+        DataManager.current_bvh_name = name
+        DataManager.current_bvh_object = bvh
+        DataManager.all_bvh[name] = bvh
         return {'FINISHED'}
 
 class GenerateJointAndBone(bpy.types.Operator):
@@ -59,32 +57,7 @@ class GenerateJointAndBone(bpy.types.Operator):
             return {'FINISHED'}
 
         current_bvh = DataManager.current_bvh_object
-
-        #生成管理Node
-        bone_manager = bpy.data.objects.new(DataManager.current_bvh_name, None)
-        scene.collection.objects.link(bone_manager)
-
-        #Create Object
-        for joint in current_bvh.Joints:
-            bpy.ops.mesh.primitive_uv_sphere_add()
-            obj = context.object
-            obj.name = joint.Name
-            joint.Object = obj
-        
-        for joint in current_bvh.Joints:
-            for child in joint.Children:
-                child.Object.parent = joint.Object
-        current_bvh.Joints[0].Object.parent = bone_manager
-        
-        '''
-        frame_start = 1
-        for joint in current_bvh.Joints:
-            for frame_current in range(current_bvh.Num_frames):
-                joint.Object.location = joint.LocalPos[frame_current]
-                joint.Object.keyframe_insert("location", index=-1, frame=frame_start + frame_current)
-                joint.Object.rotation_euler = Vector((radians(joint.LocalRot[frame_current].x), radians(joint.LocalRot[frame_current].y), radians(joint.LocalRot[frame_current].z)))
-                joint.Object.keyframe_insert("rotation_euler", index=-1, frame=frame_start + frame_current)
-        '''
+        current_bvh.add_joint(context, scene.frame_start)
         return {'FINISHED'}
 
 
