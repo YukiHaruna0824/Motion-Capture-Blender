@@ -309,6 +309,39 @@ class Bvh():
                     obj.delta_rotation_euler = rx, ry, rz
                     obj.keyframe_insert("delta_rotation_euler", index=-1, frame=frame_start + fc)
 
+    def add_armature(self, context, frame_start):
+        if frame_start < 1:
+            frame_start = 1
+
+        scene = context.scene
+        for obj in scene.objects:
+            obj.select_set(False)
+
+        arm_data = bpy.data.armatures.new('test')
+        arm_ob = bpy.data.objects.new('test', arm_data)
+        context.collection.objects.link(arm_ob)
+        
+        arm_ob.select_set(True)
+        context.view_layer.objects.active = arm_ob
+
+        bpy.ops.object.mode_set(mode='OBJECT', toggle=False)
+        bpy.ops.object.mode_set(mode='EDIT', toggle=False)
+
+        joint_list = list(self.joints.values())
+        joint_list.sort(key=lambda joint: joint.index)
+
+    def getTimeStamp(self):
+        total_d = 0
+        accumulate_d = [0] * len(self.rootJoint.anim_data)
+
+        for index in range(1, len(self.rootJoint.anim_data)):
+            last = Vector((self.rootJoint.anim_data[index - 1][0:3]))
+            current = Vector((self.rootJoint.anim_data[index][0:3]))
+            accumulate_d[index] = accumulate_d[index - 1] + (current - last).length
+            total_d += (current - last).length
+        timestamp = [(d / total_d) for d in accumulate_d]
+        return timestamp
+
     def getCubicConstant(self, t, mode):
         result = 0
         if mode == 0:
@@ -322,27 +355,43 @@ class Bvh():
 
         return result
 
-    # return Least Square cubic spline 4 points
+    # return  4 control points (Matrix 4 * 3) and sample point (List of Vector)
     def getRootJointPath(self):
+
+        timestamp = self.getTimeStamp()
+
         A = Matrix([[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]])
         for row in range(4):
             for col in range(4):
                 for fc in range(self.frame_count):
-                    t = float(fc / self.frame_count)
+                    t = timestamp[fc]
                     A[row][col] += float(self.getCubicConstant(t, row) * self.getCubicConstant(t, col))
 
         B = Matrix([[0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]])
         for row in range(4):
             for fc in range(self.frame_count):
                 lx, ly, lz, rx, ry, rz = self.rootJoint.anim_data[fc]
-                t = float(fc / self.frame_count)
+                t = timestamp[fc]
                 B[row] += self.getCubicConstant(t, row) * Vector((lx, ly, lz))
 
         A_invert = A.inverted()
+        # P = A^-1 * B
+        P = A_invert @ B
+
+        '''
         print(A)
         print(A_invert)
         print(B)
-        # P = A^-1 * B
-        P = A_invert @ B
-        return P
-            
+        print(P)
+        '''
+
+        points = []
+        for t in timestamp:
+            point = Vector((0, 0, 0))
+            for index in range(4):
+                point += self.getCubicConstant(t, index) * P[index]
+            points.append(point)
+
+        #print(points)
+
+        return P, points
