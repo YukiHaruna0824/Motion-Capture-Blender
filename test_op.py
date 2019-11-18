@@ -11,6 +11,9 @@ class DataManager():
     current_bvh_name = ''
     current_bvh_object = None
 
+class SplineBvhContainer():
+    all_spline = {}
+
 class ImportBvh(bpy.types.Operator):
     '''Add Bvh File'''
     bl_idname = "ldops.import_bvh"
@@ -55,10 +58,60 @@ class GenerateJointAndBone(bpy.types.Operator):
             return {'FINISHED'}
 
         current_bvh = DataManager.current_bvh_object
-        current_bvh.getRootJointPath()
         current_bvh.add_joint(context, scene.frame_start)
         return {'FINISHED'}
 
+class DrawBvhInitial(bpy.types.Operator):
+    bl_idname = "ldops.draw_bvh_initial"
+    bl_label = "Draw BVH Initial"
+
+    def execute(self, context):
+        scene = context.scene
+        if DataManager.current_bvh_object == None:
+            return {'FINISHED'}
+
+        current_bvh = DataManager.current_bvh_object
+        Path = current_bvh.getRootJointPath()
+
+        # create the Curve Datablock
+        curveData = bpy.data.curves.new('myCurve', type='CURVE')
+        curveData.dimensions = '3D'
+
+
+        # map coords to spline
+        polyline = curveData.splines.new('BEZIER')
+        polyline.bezier_points.add((len(Path)/2)-1)
+        for i, coord in enumerate(Path):
+            x,y,z = coord
+            index = (i + 1)//3
+            
+            if i % 3 == 0:
+                polyline.bezier_points[index].co = (x, y, z)
+                if i == 0:
+                    polyline.bezier_points[index].handle_left = (x, y, z)
+                    polyline.bezier_points[index].handle_left_type = 'AUTO'
+                if i == len(Path) - 1:
+                    polyline.bezier_points[index].handle_right = (x, y, z)
+                    polyline.bezier_points[index].handle_right_type = 'AUTO'
+            elif i % 3 == 1:
+                polyline.bezier_points[index].handle_right = (x, y, z)
+                polyline.bezier_points[index].handle_right_type = 'AUTO'
+            elif i % 3 == 2:
+                polyline.bezier_points[index].handle_left = (x, y, z)
+                polyline.bezier_points[index].handle_left_type = 'AUTO'
+
+        # create Object
+        curveOB = bpy.data.objects.new('myCurve', curveData)
+        curveData.bevel_depth = 0.01
+
+        # attach to scene and validate context
+        context.collection.objects.link(curveOB)
+        bpy.ops.object.select_all(action='DESELECT')
+        context.view_layer.objects.active = curveOB
+        curveOB.select_set(True)
+        bpy.ops.object.mode_set(mode='EDIT')
+
+        return {'FINISHED'}
 
 class CreateSpline(bpy.types.Operator):
     bl_idname = "ldops.create_spline"
@@ -101,13 +154,16 @@ class CreateSpline(bpy.types.Operator):
         curveData.bevel_depth = 0.01
 
         # attach to scene and validate context
-        scene.collection.objects.link(curveOB)
+        context.collection.objects.link(curveOB)
         bpy.ops.object.mode_set(mode='OBJECT')
         bpy.ops.object.select_all(action='DESELECT')
         context.view_layer.objects.active = curveOB
         curveOB.select_set(True)
         bpy.ops.object.mode_set(mode='EDIT')
+
+        SplineBvhContainer.all_spline[curveOB]='None'
         return {'FINISHED'}
+
 
 class AddPoint(bpy.types.Operator):
     bl_idname = "ldops.add_point"
@@ -219,6 +275,7 @@ class DelPoint(bpy.types.Operator):
 def register():
     bpy.utils.register_class(ImportBvh)
     bpy.utils.register_class(GenerateJointAndBone)
+    bpy.utils.register_class(DrawBvhInitial)
     bpy.utils.register_class(CreateSpline)
     bpy.utils.register_class(AddPoint)
     bpy.utils.register_class(DelPoint)
@@ -226,6 +283,7 @@ def register():
 def unregister():
     bpy.utils.unregister_class(ImportBvh)
     bpy.utils.unregister_class(GenerateJointAndBone)
+    bpy.utils.unregister_class(DrawBvhInitial)
     bpy.utils.unregister_class(CreateSpline)
     bpy.utils.unregister_class(AddPoint)
     bpy.utils.unregister_class(DelPoint)
