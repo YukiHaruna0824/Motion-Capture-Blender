@@ -70,7 +70,8 @@ class Joint:
 
         # List of 6 length tuples: (lx, ly, lz, rx, ry, rz)
         # even if the channels aren't used they will just be zero.
-        self.anim_data = [(0, 0, 0, 0, 0, 0)]
+        #self.anim_data = [(0, 0, 0, 0, 0, 0)]
+        self.anim_data = []
 
     def __repr__(self):
         return (
@@ -85,6 +86,7 @@ class Bvh():
     def __init__(self):
         #key : name, value : class Joint
         self.joints = {}
+        self.rootJoint = None
         self.frame_time = 0
         self.frame_count = 0
         
@@ -103,12 +105,17 @@ class Bvh():
         
         self.joints = {None: None}
         joint_serial = [None]
-        
         channelIndex = -1
-        
+        isRoot = False
+
         lineIdx = 0
         while lineIdx < len(file_lines) - 1:
             if file_lines[lineIdx][0].lower() in {'root', 'joint'}:
+                #get root joint
+                isRoot = False
+                if file_lines[lineIdx][0].lower() == 'root':
+                    isRoot = True
+
                 #Joint name
                 name = file_lines[lineIdx][1]
                 
@@ -164,6 +171,8 @@ class Bvh():
                     rot_orders,
                     len(self.joints) - 1,
                 )
+                if isRoot:
+                    self.rootJoint = joint
                 joint_serial.append(joint)
 
             if file_lines[lineIdx][0].lower() == 'end' and file_lines[lineIdx][1].lower() == 'site':
@@ -246,8 +255,7 @@ class Bvh():
 
                     joint.rest_tail_world = rest_tail_world * (1.0 / len(joint.children))
                     joint.rest_tail_local = rest_tail_local * (1.0 / len(joint.children))
-
-
+                    
     def add_joint(self, context, frame_start):
         if frame_start < 1:
             frame_start = 1
@@ -300,3 +308,41 @@ class Bvh():
                 if joint.has_rot:
                     obj.delta_rotation_euler = rx, ry, rz
                     obj.keyframe_insert("delta_rotation_euler", index=-1, frame=frame_start + fc)
+
+    def getCubicConstant(self, t, mode):
+        result = 0
+        if mode == 0:
+            result = float(pow(1 - t, 3) / 6)
+        elif mode == 1:
+            result = float((3 * pow(t, 3) - 6 * pow(t, 2) + 4) / 6)
+        elif mode == 2:
+            result = float((-3 * pow(t, 3) + 3 * pow(t, 2) + 3 * t + 1) / 6)
+        elif mode == 3:
+            result = pow(t, 3) / 6
+
+        return result
+
+    # return Least Square cubic spline 4 points
+    def getRootJointPath(self):
+        A = Matrix([[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]])
+        for row in range(4):
+            for col in range(4):
+                for fc in range(self.frame_count):
+                    t = float(fc / self.frame_count)
+                    A[row][col] += float(self.getCubicConstant(t, row) * self.getCubicConstant(t, col))
+
+        B = Matrix([[0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]])
+        for row in range(4):
+            for fc in range(self.frame_count):
+                lx, ly, lz, rx, ry, rz = self.rootJoint.anim_data[fc]
+                t = float(fc / self.frame_count)
+                B[row] += self.getCubicConstant(t, row) * Vector((lx, ly, lz))
+
+        A_invert = A.inverted()
+        print(A)
+        print(A_invert)
+        print(B)
+        # P = A^-1 * B
+        P = A_invert @ B
+        return P
+            

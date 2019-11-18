@@ -55,6 +55,7 @@ class GenerateJointAndBone(bpy.types.Operator):
             return {'FINISHED'}
 
         current_bvh = DataManager.current_bvh_object
+        current_bvh.getRootJointPath()
         current_bvh.add_joint(context, scene.frame_start)
         return {'FINISHED'}
 
