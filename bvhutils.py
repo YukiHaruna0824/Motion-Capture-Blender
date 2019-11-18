@@ -328,14 +328,14 @@ class Bvh():
         for row in range(4):
             for col in range(4):
                 for fc in range(self.frame_count):
-                    t = float(fc / self.frame_count)
+                    t = float(fc / (self.frame_count-1))
                     A[row][col] += float(self.getCubicConstant(t, row) * self.getCubicConstant(t, col))
 
         B = Matrix([[0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]])
         for row in range(4):
             for fc in range(self.frame_count):
                 lx, ly, lz, rx, ry, rz = self.rootJoint.anim_data[fc]
-                t = float(fc / self.frame_count)
+                t = float(fc / (self.frame_count-1))
                 B[row] += self.getCubicConstant(t, row) * Vector((lx, ly, lz))
 
         A_invert = A.inverted()
