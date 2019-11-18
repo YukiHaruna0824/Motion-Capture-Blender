@@ -71,41 +71,44 @@ class DrawBvhInitial(bpy.types.Operator):
             return {'FINISHED'}
 
         current_bvh = DataManager.current_bvh_object
-        Path = current_bvh.getRootJointPath()
+        Path,Points,Points_ori = current_bvh.getRootJointPath()
 
         # create the Curve Datablock
         curveData = bpy.data.curves.new('myCurve', type='CURVE')
         curveData.dimensions = '3D'
 
+        curveData_ori = bpy.data.curves.new('myCurve-ori', type='CURVE')
+        curveData_ori.dimensions = '3D'
 
-        # map coords to spline
-        polyline = curveData.splines.new('BEZIER')
-        polyline.bezier_points.add((len(Path)/2)-1)
         for i, coord in enumerate(Path):
             x,y,z = coord
-            index = (i + 1)//3
-            
-            if i % 3 == 0:
-                polyline.bezier_points[index].co = (x, y, z)
-                if i == 0:
-                    polyline.bezier_points[index].handle_left = (x, y, z)
-                    polyline.bezier_points[index].handle_left_type = 'AUTO'
-                if i == len(Path) - 1:
-                    polyline.bezier_points[index].handle_right = (x, y, z)
-                    polyline.bezier_points[index].handle_right_type = 'AUTO'
-            elif i % 3 == 1:
-                polyline.bezier_points[index].handle_right = (x, y, z)
-                polyline.bezier_points[index].handle_right_type = 'AUTO'
-            elif i % 3 == 2:
-                polyline.bezier_points[index].handle_left = (x, y, z)
-                polyline.bezier_points[index].handle_left_type = 'AUTO'
+            bpy.ops.mesh.primitive_cube_add(size=1.0,location=(x, y, z))
+
+        # map coords to spline
+        polyline = curveData.splines.new('POLY')
+        polyline.points.add(len(Points)-1)
+
+        for i, coord in enumerate(Points):
+            x,y,z = coord
+            polyline.points[i].co=(x,y,z,0)
+
+        polyline_ori = curveData.splines.new('POLY')
+        polyline_ori.points.add(len(Points_ori)-1)
+
+        for i, coord in enumerate(Points_ori):
+            x,y,z = coord
+            polyline_ori.points[i].co=(x,y,z,0)
 
         # create Object
         curveOB = bpy.data.objects.new('myCurve', curveData)
         curveData.bevel_depth = 0.01
 
+        curveOB_ori = bpy.data.objects.new('myCurve-ori', curveData_ori)
+        curveData_ori.bevel_depth = 0.01
+
         # attach to scene and validate context
         context.collection.objects.link(curveOB)
+        context.collection.objects.link(curveOB_ori)
         bpy.ops.object.select_all(action='DESELECT')
         context.view_layer.objects.active = curveOB
         curveOB.select_set(True)

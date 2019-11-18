@@ -364,22 +364,14 @@ class Bvh():
         for row in range(4):
             for col in range(4):
                 for fc in range(self.frame_count):
-<<<<<<< HEAD
                     t = timestamp[fc]
-=======
-                    t = float(fc / (self.frame_count-1))
->>>>>>> 506d944d2153048636b3f3abb56b3f25165a801d
                     A[row][col] += float(self.getCubicConstant(t, row) * self.getCubicConstant(t, col))
 
         B = Matrix([[0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]])
         for row in range(4):
             for fc in range(self.frame_count):
                 lx, ly, lz, rx, ry, rz = self.rootJoint.anim_data[fc]
-<<<<<<< HEAD
                 t = timestamp[fc]
-=======
-                t = float(fc / (self.frame_count-1))
->>>>>>> 506d944d2153048636b3f3abb56b3f25165a801d
                 B[row] += self.getCubicConstant(t, row) * Vector((lx, ly, lz))
 
         A_invert = A.inverted()
@@ -402,4 +394,9 @@ class Bvh():
 
         #print(points)
 
-        return P, points
+        originalPoints = []
+        for fc in range(self.frame_count):
+            location = Vector((self.rootJoint.anim_data[fc][0:3]))
+            originalPoints.append(location)
+
+        return P, points , originalPoints
