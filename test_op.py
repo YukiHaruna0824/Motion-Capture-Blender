@@ -2,6 +2,7 @@ import bpy
 import os
 from math import radians, ceil
 from .bvhutils import *
+from bpy.app.handlers import persistent
 
 #管理匯入資料物件
 class DataManager():
@@ -12,7 +13,11 @@ class DataManager():
     current_bvh_object = None
 
 class SplineBvhContainer():
-    all_spline = {}
+    spline_list = []
+    spline_list_preserve = []
+    curve_object_list = []
+    index = 0
+    function_added = 0
 
 class ImportBvh(bpy.types.Operator):
     '''Add Bvh File'''
@@ -61,6 +66,7 @@ class GenerateJointAndBone(bpy.types.Operator):
         current_bvh.add_joint(context, scene.frame_start)
         return {'FINISHED'}
 
+
 class DrawBvhInitial(bpy.types.Operator):
     bl_idname = "ldops.draw_bvh_initial"
     bl_label = "Draw BVH Initial"
@@ -74,15 +80,13 @@ class DrawBvhInitial(bpy.types.Operator):
         Path,Points,Points_ori = current_bvh.getRootJointPath()
 
         # create the Curve Datablock
-        curveData = bpy.data.curves.new('myCurve', type='CURVE')
-        curveData.dimensions = '3D'
+        curveData = bpy.data.curves.new('PathCurve', type='CURVE')
 
-        curveData_ori = bpy.data.curves.new('myCurve-ori', type='CURVE')
-        curveData_ori.dimensions = '3D'
+        curveData_ori = bpy.data.curves.new('PathCurve-original', type='CURVE')
 
         for i, coord in enumerate(Path):
             x,y,z = coord
-            bpy.ops.mesh.primitive_cube_add(size=1.0,location=(x, y, z))
+            bpy.ops.mesh.primitive_cube_add(size=5.0,location=(x, y, z))
 
         # map coords to spline
         polyline = curveData.splines.new('POLY')
@@ -92,7 +96,7 @@ class DrawBvhInitial(bpy.types.Operator):
             x,y,z = coord
             polyline.points[i].co=(x,y,z,0)
 
-        polyline_ori = curveData.splines.new('POLY')
+        polyline_ori = curveData_ori.splines.new('POLY')
         polyline_ori.points.add(len(Points_ori)-1)
 
         for i, coord in enumerate(Points_ori):
@@ -100,71 +104,110 @@ class DrawBvhInitial(bpy.types.Operator):
             polyline_ori.points[i].co=(x,y,z,0)
 
         # create Object
-        curveOB = bpy.data.objects.new('myCurve', curveData)
-        curveData.bevel_depth = 0.01
+        curveOB = bpy.data.objects.new('PathCurve', curveData)
 
-        curveOB_ori = bpy.data.objects.new('myCurve-ori', curveData_ori)
-        curveData_ori.bevel_depth = 0.01
+        curveOB_ori = bpy.data.objects.new('PathCurve-original', curveData_ori)
 
         # attach to scene and validate context
         context.collection.objects.link(curveOB)
         context.collection.objects.link(curveOB_ori)
+        '''
         bpy.ops.object.select_all(action='DESELECT')
         context.view_layer.objects.active = curveOB
         curveOB.select_set(True)
         bpy.ops.object.mode_set(mode='EDIT')
-
+        '''
         return {'FINISHED'}
 
 class CreateSpline(bpy.types.Operator):
     bl_idname = "ldops.create_spline"
     bl_label = "Add spline"
 
+    def getCubicConstant(self, t, mode):
+        result = 0
+        if mode == 0:
+            result = float(pow(1 - t, 3) / 6)
+        elif mode == 1:
+            result = float((3 * pow(t, 3) - 6 * pow(t, 2) + 4) / 6)
+        elif mode == 2:
+            result = float((-3 * pow(t, 3) + 3 * pow(t, 2) + 3 * t + 1) / 6)
+        elif mode == 3:
+            result = pow(t, 3) / 6
+
+        return result
+
+    def calc_path(self,coords):
+        points = []
+        for t in range(200):
+            point = Vector((0, 0, 0))
+            for index in range(4):
+                point.x += self.getCubicConstant(t, index) * coords[index][0]
+                point.y += self.getCubicConstant(t, index) * coords[index][1]
+                point.z += self.getCubicConstant(t, index) * coords[index][2]
+            points.append(point)
+        return points
+
+    @persistent
+    def loc_change(dump1,dump2):
+        for i in range(SplineBvhContainer.index):
+            for j in range(4):
+                loc = Vector((SplineBvhContainer.spline_list[i][j].location.x,
+                                SplineBvhContainer.spline_list[i][j].location.y,
+                                SplineBvhContainer.spline_list[i][j].location.z))
+                dloc = loc - SplineBvhContainer.spline_list_preserve[i][j]
+                
+                if dloc.length > 1.0e-4:
+                    calc_path(SplineBvhContainer.spline_list[i])
+                    print("Cube has moved")
+                    SplineBvhContainer.spline_list_preserve[i][j] = loc
+
     def execute(self, context):
-        scene = context.scene
-        # print all objects
-        # for obj in bpy.data.objects:
-        #     print(obj.name)
-        #     if("Curve" in obj.name):
-        #         print("found")
-        #         scene.collection.objects.unlink(obj)
-        #         bpy.data.objects.remove(obj)
+        if(SplineBvhContainer.function_added == 0):
+            SplineBvhContainer.function_added = 1
+            bpy.app.handlers.depsgraph_update_post.append(self.loc_change)
 
-        # for cur in bpy.data.curves:
-        #     print(cur.name)
-        #     bpy.data.curves.remove(cur)
+        master_collection = bpy.context.scene.collection
+        collection = bpy.data.collections.new("Cubes" + str(SplineBvhContainer.index))
+        master_collection.children.link(collection)
 
-        coords = [(4,1,0), (6,0,0), (8,1,0)]
+        coords = [(4,1,0), (6,0,0), (8,1,0), (10,0,0)]
 
-        # create the Curve Datablock
-        curveData = bpy.data.curves.new('myCurve', type='CURVE')
-        curveData.dimensions = '2D'
-        curveData.resolution_u = 2
-
-        # map coords to spline
-        polyline = curveData.splines.new('BEZIER')
-        polyline.bezier_points.add(len(coords)-1)
+        cube_list = []
+        cube_list_preserve = []
         for i, coord in enumerate(coords):
             x,y,z = coord
-            polyline.bezier_points[i].co = (x, y, z)
-            polyline.bezier_points[i].handle_left = (x-0.5, y, z)
-            polyline.bezier_points[i].handle_left_type = 'AUTO'
-            polyline.bezier_points[i].handle_right = (x+0.5, y, z)
-            polyline.bezier_points[i].handle_right_type = 'AUTO'
+            bpy.ops.mesh.primitive_cube_add(size=2.0,location=(x, y, z))
+            ob = bpy.context.object
+            ob.data.name = 'CubeMesh' + str(SplineBvhContainer.index) + '_' + str(i)
+            ob.name = 'Cube' + str(SplineBvhContainer.index) + '_' + str(i)
+            collection.objects.link(ob)
+            bpy.context.view_layer.active_layer_collection.collection.objects.unlink(ob)
+            cube_list.append(ob)
+            loc = Vector((ob.location.x, ob.location.y, ob.location.z))
+            cube_list_preserve.append(loc)
+        
+        SplineBvhContainer.spline_list.append(cube_list)
+        SplineBvhContainer.spline_list_preserve.append(cube_list_preserve)
+        SplineBvhContainer.index += 1
 
-        # create Object
-        curveOB = bpy.data.objects.new('myCurve', curveData)
-        curveData.bevel_depth = 0.01
+        # create the Curve Datablock
+        curveData = bpy.data.curves.new('UserCurve', type='CURVE')
 
-        # attach to scene and validate context
+        Points = self.calc_path(coords)
+
+        # map coords to spline
+        polyline = curveData.splines.new('POLY')
+        polyline.points.add(len(Points)-1)
+
+        for i, coord in enumerate(Points):
+            x,y,z = coord
+            polyline.points[i].co=(x,y,z,0)
+
+        curveOB = bpy.data.objects.new('UserCurve', curveData)
         context.collection.objects.link(curveOB)
-        bpy.ops.object.mode_set(mode='OBJECT')
-        bpy.ops.object.select_all(action='DESELECT')
-        context.view_layer.objects.active = curveOB
-        curveOB.select_set(True)
-        bpy.ops.object.mode_set(mode='EDIT')
 
-        SplineBvhContainer.all_spline[curveOB]='None'
+        SplineBvhContainer.curve_object_list.append(curveOB)
+
         return {'FINISHED'}
 
 
@@ -175,7 +218,14 @@ class AddPoint(bpy.types.Operator):
     def execute(self, context):
         scene = context.scene
         
-        # print all objects
+        for spline in SplineBvhContainer.spline_list:
+            for i in range(4):
+                print(spline[i].name)
+                print(spline[i].location)
+        for spline in SplineBvhContainer.spline_list_preserve:
+            for i in range(4):
+                print(spline[i])
+        '''
         for obj in bpy.data.objects:
             print(obj.name)
             if("Curve" in obj.name):
@@ -212,7 +262,7 @@ class AddPoint(bpy.types.Operator):
                     bpy.context.view_layer.objects.active = obj
                     obj.select_set(True)
                     bpy.ops.object.mode_set(mode='EDIT')
-
+        '''
         return {'FINISHED'}
 
 class DelPoint(bpy.types.Operator):
@@ -274,7 +324,7 @@ class DelPoint(bpy.types.Operator):
                     bpy.ops.object.mode_set(mode='EDIT')
 
         return {'FINISHED'}
-    
+
 def register():
     bpy.utils.register_class(ImportBvh)
     bpy.utils.register_class(GenerateJointAndBone)
