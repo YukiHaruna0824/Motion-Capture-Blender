@@ -3,6 +3,7 @@ import os
 from math import radians, ceil
 from .bvhutils import *
 from bpy.app.handlers import persistent
+import decimal
 
 #管理匯入資料物件
 class DataManager():
@@ -50,6 +51,20 @@ class ImportBvh(bpy.types.Operator):
         DataManager.current_bvh_name = name
         DataManager.current_bvh_object = bvh
         DataManager.all_bvh[name] = bvh
+        DataManager.current_bvh_object.bvh_path = None
+        return {'FINISHED'}
+
+class SetPath(bpy.types.Operator):
+    bl_idname = "ldops.set_path"
+    bl_label = "Set path"
+
+    def execute(self,context):
+        if DataManager.current_bvh_object == None:
+            return {'FINISHED'}
+        for i in range(SplineBvhContainer.index):
+            for j in range(4):
+                if bpy.context.view_layer.objects.active == SplineBvhContainer.spline_list[i][j]:
+                    DataManager.current_bvh_object.bvh_path = SplineBvhContainer.spline_list[i]
         return {'FINISHED'}
 
 class GenerateJointAndBone(bpy.types.Operator):
@@ -86,7 +101,7 @@ class DrawBvhInitial(bpy.types.Operator):
 
         for i, coord in enumerate(Path):
             x,y,z = coord
-            bpy.ops.mesh.primitive_cube_add(size=5.0,location=(x, y, z))
+            bpy.ops.mesh.primitive_cube_add(size=3.0,location=(x, y, z))
 
         # map coords to spline
         polyline = curveData.splines.new('POLY')
@@ -111,66 +126,76 @@ class DrawBvhInitial(bpy.types.Operator):
         # attach to scene and validate context
         context.collection.objects.link(curveOB)
         context.collection.objects.link(curveOB_ori)
-        '''
-        bpy.ops.object.select_all(action='DESELECT')
-        context.view_layer.objects.active = curveOB
-        curveOB.select_set(True)
-        bpy.ops.object.mode_set(mode='EDIT')
-        '''
         return {'FINISHED'}
+
+def getCubicConstant(t, mode):
+    result = 0
+    if mode == 0:
+        result = float(pow(1 - t, 3) / 6)
+    elif mode == 1:
+        result = float((3 * pow(t, 3) - 6 * pow(t, 2) + 4) / 6)
+    elif mode == 2:
+        result = float((-3 * pow(t, 3) + 3 * pow(t, 2) + 3 * t + 1) / 6)
+    elif mode == 3:
+        result = pow(t, 3) / 6
+
+    return result
+
+def float_range(start, stop, step):
+    while start < stop:
+        yield float(start)
+        start += decimal.Decimal(step)
+
+def calc_path(coords):
+    points = []
+    fr = float_range(0,1,1.0/200.0)
+    for t in list(fr):
+        point = Vector((0, 0, 0))
+        for index in range(4):
+            point.x += getCubicConstant(t, index) * coords[index][0]
+            point.y += getCubicConstant(t, index) * coords[index][1]
+            point.z += getCubicConstant(t, index) * coords[index][2]
+        points.append(point)
+    return points
+
+
+def loc_change():
+
+    for i in range(SplineBvhContainer.index):
+        for j in range(4):
+            loc = Vector((SplineBvhContainer.spline_list[i][j].location.x,
+                            SplineBvhContainer.spline_list[i][j].location.y,
+                            SplineBvhContainer.spline_list[i][j].location.z))
+            dloc = loc - SplineBvhContainer.spline_list_preserve[i][j]
+
+            coords = [SplineBvhContainer.spline_list[i][0].location,SplineBvhContainer.spline_list[i][1].location
+                     ,SplineBvhContainer.spline_list[i][2].location,SplineBvhContainer.spline_list[i][3].location]
+            if dloc.length > 1.0e-4:
+                Points = calc_path(coords)
+                for k, coord in enumerate(Points):
+                    x,y,z = coord
+                    SplineBvhContainer.curve_object_list[i].data.splines[0].points[k].co = (x,y,z,0)
+                SplineBvhContainer.spline_list_preserve[i][j] = loc
+    
+    return 0.02
 
 class CreateSpline(bpy.types.Operator):
     bl_idname = "ldops.create_spline"
     bl_label = "Add spline"
 
-    def getCubicConstant(self, t, mode):
-        result = 0
-        if mode == 0:
-            result = float(pow(1 - t, 3) / 6)
-        elif mode == 1:
-            result = float((3 * pow(t, 3) - 6 * pow(t, 2) + 4) / 6)
-        elif mode == 2:
-            result = float((-3 * pow(t, 3) + 3 * pow(t, 2) + 3 * t + 1) / 6)
-        elif mode == 3:
-            result = pow(t, 3) / 6
-
-        return result
-
-    def calc_path(self,coords):
-        points = []
-        for t in range(200):
-            point = Vector((0, 0, 0))
-            for index in range(4):
-                point.x += self.getCubicConstant(t, index) * coords[index][0]
-                point.y += self.getCubicConstant(t, index) * coords[index][1]
-                point.z += self.getCubicConstant(t, index) * coords[index][2]
-            points.append(point)
-        return points
-
-    @persistent
-    def loc_change(dump1,dump2):
-        for i in range(SplineBvhContainer.index):
-            for j in range(4):
-                loc = Vector((SplineBvhContainer.spline_list[i][j].location.x,
-                                SplineBvhContainer.spline_list[i][j].location.y,
-                                SplineBvhContainer.spline_list[i][j].location.z))
-                dloc = loc - SplineBvhContainer.spline_list_preserve[i][j]
-                
-                if dloc.length > 1.0e-4:
-                    calc_path(SplineBvhContainer.spline_list[i])
-                    print("Cube has moved")
-                    SplineBvhContainer.spline_list_preserve[i][j] = loc
-
     def execute(self, context):
         if(SplineBvhContainer.function_added == 0):
             SplineBvhContainer.function_added = 1
-            bpy.app.handlers.depsgraph_update_post.append(self.loc_change)
+            bpy.app.timers.register(loc_change)
+            bpy.ops.object.select_all(action='DESELECT')
+            bpy.data.objects['Cube'].select_set(True)
+            bpy.ops.object.delete()
 
         master_collection = bpy.context.scene.collection
         collection = bpy.data.collections.new("Cubes" + str(SplineBvhContainer.index))
         master_collection.children.link(collection)
 
-        coords = [(4,1,0), (6,0,0), (8,1,0), (10,0,0)]
+        coords = [(4,1,0), (8,1,0), (6,0,0), (10,0,0)]
 
         cube_list = []
         cube_list_preserve = []
@@ -193,7 +218,7 @@ class CreateSpline(bpy.types.Operator):
         # create the Curve Datablock
         curveData = bpy.data.curves.new('UserCurve', type='CURVE')
 
-        Points = self.calc_path(coords)
+        Points = calc_path(coords)
 
         # map coords to spline
         polyline = curveData.splines.new('POLY')
@@ -207,9 +232,7 @@ class CreateSpline(bpy.types.Operator):
         context.collection.objects.link(curveOB)
 
         SplineBvhContainer.curve_object_list.append(curveOB)
-
         return {'FINISHED'}
-
 
 class AddPoint(bpy.types.Operator):
     bl_idname = "ldops.add_point"
@@ -326,6 +349,7 @@ class DelPoint(bpy.types.Operator):
         return {'FINISHED'}
 
 def register():
+    bpy.utils.register_class(SetPath)
     bpy.utils.register_class(ImportBvh)
     bpy.utils.register_class(GenerateJointAndBone)
     bpy.utils.register_class(DrawBvhInitial)
@@ -334,6 +358,7 @@ def register():
     bpy.utils.register_class(DelPoint)
 
 def unregister():
+    bpy.utils.unregister_class(SetPath)
     bpy.utils.unregister_class(ImportBvh)
     bpy.utils.unregister_class(GenerateJointAndBone)
     bpy.utils.unregister_class(DrawBvhInitial)

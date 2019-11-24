@@ -89,6 +89,7 @@ class Bvh():
         self.rootJoint = None
         self.frame_time = 0
         self.frame_count = 0
+        self.bvh_path = None
         
     def read_bvh(self, file_path):
         file = open(file_path, 'rU')
@@ -299,7 +300,10 @@ class Bvh():
         for name, joint in self.joints.items():
             obj = joint.temp
             for fc in range(len(joint.anim_data)):
-                lx, ly, lz, rx, ry, rz = joint.anim_data[fc]
+                if self.bvh_path != None:
+                    A = Matrix([self.bvh_path[0].location, self.bvh_path[1].location, self.bvh_path[2].location, self.bvh_path[3].location])
+                    A_invert = A.inverted()
+                    lx, ly, lz, rx, ry, rz = joint.anim_data[fc] @ A
 
                 if joint.has_loc:
                     obj.delta_location = Vector((lx, ly, lz)) - joint.rest_head_world

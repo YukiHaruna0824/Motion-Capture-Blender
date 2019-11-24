@@ -36,18 +36,18 @@ class Test_Panel(bpy.types.Panel):
         row.operator('ldops.import_bvh', text='', icon='FILE_NEW')
 
         row = layout.row()
+        row.operator('ldops.set_path')
+        row = layout.row()
         row.prop(pref, 'bvhRecord')
         row.operator('ldops.generate_bone', text='Generate Bone')
-        
         row = layout.row()
         row.operator('ldops.draw_bvh_initial')
 
         row = layout.row()
         row.operator('ldops.create_spline')
-        row = layout.row()
-        row.operator('ldops.add_point')
-        row.operator('ldops.del_point')
-
+        #row = layout.row()
+        #row.operator('ldops.add_point')
+        #row.operator('ldops.del_point')
 
 
 def register():
