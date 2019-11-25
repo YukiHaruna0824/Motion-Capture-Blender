@@ -1,6 +1,6 @@
 import bpy
 from mathutils import Vector, Euler, Matrix
-from math import radians, ceil
+from math import radians, ceil , degrees
 
 class Joint:
     __slots__ = (
@@ -89,7 +89,8 @@ class Bvh():
         self.rootJoint = None
         self.frame_time = 0
         self.frame_count = 0
-        self.bvh_path = None
+        self.destiny_points = []
+        self.destiny_points_nodes = []
         
     def read_bvh(self, file_path):
         file = open(file_path, 'rU')
@@ -256,8 +257,9 @@ class Bvh():
 
                     joint.rest_tail_world = rest_tail_world * (1.0 / len(joint.children))
                     joint.rest_tail_local = rest_tail_local * (1.0 / len(joint.children))
-                    
-    def add_joint(self, context, frame_start):
+
+
+    def add_joint(self, context, frame_start, source_points):
         if frame_start < 1:
             frame_start = 1
         
@@ -297,21 +299,63 @@ class Bvh():
                 ob_end.parent = joint.temp
                 ob_end.location = joint.rest_tail_world - joint.rest_head_world
         
+        destiny_points = self.destiny_points
+        root_index = 0
         for name, joint in self.joints.items():
             obj = joint.temp
-            for fc in range(len(joint.anim_data)):
-                if self.bvh_path != None:
-                    A = Matrix([self.bvh_path[0].location, self.bvh_path[1].location, self.bvh_path[2].location, self.bvh_path[3].location])
-                    A_invert = A.inverted()
-                    lx, ly, lz, rx, ry, rz = joint.anim_data[fc] @ A
 
+            lx=ly=lz=rx=ry=rz=0
+            lx1=ly1=lz1=rx1=ry1=rz1=0
+
+            for fc in range(len(joint.anim_data)):
+                if fc != 0:
+                    lx, ly, lz, rx, ry, rz = joint.anim_data[fc]
+                    lx1,ly1,lz1,rx1,ry1,rz1 = joint.anim_data[fc-1]
+                else:
+                    lx, ly, lz, rx, ry, rz = joint.anim_data[1]
+                    lx1,ly1,lz1,rx1,ry1,rz1 = joint.anim_data[0]
+                
                 if joint.has_loc:
-                    obj.delta_location = Vector((lx, ly, lz)) - joint.rest_head_world
-                    obj.keyframe_insert("delta_location", index=-1, frame=frame_start + fc)
+                    p0ti = Vector((lx, ly, lz)) - source_points[fc]
+                    obj.delta_location = p0ti - joint.rest_head_world
                 
                 if joint.has_rot:
-                    obj.delta_rotation_euler = rx, ry, rz
+                    rotation = Vector((rx,ry,rz))
+                    if root_index == 0:
+                        #rotation = Vector((lx,ly,lz)) - Vector((lx1,ly1,lz1))
+                        # r0ti = None
+                        # if fc == 0:
+                        #     source_rotation = source_points[1] - source_points[0]
+                        #     r0ti = source_rotation.rotation_difference(rotation).to_euler()
+                        # else:
+                        #     source_rotation = source_points[fc] - source_points[fc-1]
+                        #     r0ti = source_rotation.rotation_difference(rotation).to_euler()
+
+                        # rotation.rotate(r0ti)
+
+                        rt = None
+                        if fc == 0:
+                            destiny_rotation = destiny_points[1] - destiny_points[0]
+                            source_rotation = source_points[1] - source_points[0]
+                            rt = source_rotation.rotation_difference(destiny_rotation).to_euler()
+                        else:
+                            destiny_rotation = destiny_points[fc] - destiny_points[fc-1]
+                            source_rotation = source_points[fc] - source_points[fc-1]
+                            rt = source_rotation.rotation_difference(destiny_rotation).to_euler()
+                            
+                        rotation.rotate(rt)
+                        obj.rotation_euler = rt
+                        obj.keyframe_insert("rotation_euler", index=-1, frame=frame_start + fc)
+
+                    rotation = Vector((rx,ry,rz))
+                    obj.delta_rotation_euler = rotation
                     obj.keyframe_insert("delta_rotation_euler", index=-1, frame=frame_start + fc)
+
+                if joint.has_loc:
+                    pt = destiny_points[fc]
+                    obj.delta_location +=  pt
+                    obj.keyframe_insert("delta_location", index=-1, frame=frame_start + fc)
+            root_index += 1
 
     def add_armature(self, context, frame_start):
         if frame_start < 1:

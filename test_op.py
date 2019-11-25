@@ -12,6 +12,9 @@ class DataManager():
     all_bvh = {}
     current_bvh_name = ''
     current_bvh_object = None
+    current_bvh_name_concat = ''
+    current_bvh_object_concat = None
+    nowSelectingFragment = 0
 
 class SplineBvhContainer():
     spline_list = []
@@ -51,7 +54,7 @@ class ImportBvh(bpy.types.Operator):
         DataManager.current_bvh_name = name
         DataManager.current_bvh_object = bvh
         DataManager.all_bvh[name] = bvh
-        DataManager.current_bvh_object.bvh_path = None
+        DataManager.current_bvh_object.destiny_points_nodes = None
         return {'FINISHED'}
 
 class SetPath(bpy.types.Operator):
@@ -61,10 +64,21 @@ class SetPath(bpy.types.Operator):
     def execute(self,context):
         if DataManager.current_bvh_object == None:
             return {'FINISHED'}
-        for i in range(SplineBvhContainer.index):
-            for j in range(4):
-                if bpy.context.view_layer.objects.active == SplineBvhContainer.spline_list[i][j]:
-                    DataManager.current_bvh_object.bvh_path = SplineBvhContainer.spline_list[i]
+        index = 0
+        for spline in SplineBvhContainer.spline_list:
+            for i in range(len(spline)):
+                if bpy.context.view_layer.objects.active == spline[i]:
+                    number = int(DataManager.nowSelectingFragment)
+                    spline_list_t = []
+                    for k in range(number,number+4):
+                        spline_list_t.append(spline[k].location)
+
+                    Points = calc_path(spline_list_t,200)
+                    for k, coord in enumerate(Points):
+                        x,y,z = coord
+                        SplineBvhContainer.curve_object_list[index].data.splines[0].points[k].co = (x,y,z,0)
+                    DataManager.current_bvh_object.destiny_points_nodes = spline_list_t
+            index+=1
         return {'FINISHED'}
 
 class GenerateJointAndBone(bpy.types.Operator):
@@ -78,9 +92,118 @@ class GenerateJointAndBone(bpy.types.Operator):
             return {'FINISHED'}
 
         current_bvh = DataManager.current_bvh_object
-        current_bvh.add_joint(context, scene.frame_start)
+        path,source_points,original_points = current_bvh.getRootJointPath()
+        nodes = DataManager.current_bvh_object.destiny_points_nodes
+        nodelists = [nodes[0],nodes[1],nodes[2],nodes[3]]
+        DataManager.current_bvh_object.destiny_points = calc_path(nodelists,len(source_points))
+        current_bvh.add_joint(context, scene.frame_start,source_points)
         return {'FINISHED'}
 
+def add_concat_joint(a,b,context, frame_start):
+    if frame_start < 1:
+        frame_start = 1
+    
+    scene = context.scene
+    for obj in scene.objects:
+        obj.select_set(False)
+    
+    objects = []
+
+    def add_ob(name):
+        obj = bpy.data.objects.new(name, None)
+        context.collection.objects.link(obj)
+        objects.append(obj)
+        obj.select_set(True)
+        obj.empty_display_type = 'CUBE'
+        obj.empty_display_size = 0.5
+        return obj
+    
+    #Add objects
+    for name, joint in a.joints.items():
+        joint.temp = add_ob(name)
+        joint.temp.rotation_mode = joint.rot_order_str[::-1]
+    
+    #Set Parent
+    for joint in a.joints.values():
+        for child in joint.children:
+            child.temp.parent = joint.temp
+    
+    #Set location
+    for joint in a.joints.values():
+        joint.temp.location = joint.rest_head_local
+
+    #Add tail objects
+    for name, joint in a.joints.items():
+        if not joint.children:
+            ob_end = add_ob(name + '_end')
+            ob_end.parent = joint.temp
+            ob_end.location = joint.rest_tail_world - joint.rest_head_world
+    
+
+    fcprev = 0
+    lxp=lyp=lzp=0
+    root_index=0
+    obj_p = []
+    for name, joint in a.joints.items():
+        obj = joint.temp
+        fcprev=len(joint.anim_data)
+        obj_p.append(joint.temp)
+        root_index=0
+
+        print(len(joint.anim_data))
+        for fc in range(len(joint.anim_data)):
+
+            lx, ly, lz, rx, ry, rz = joint.anim_data[fc]
+
+            if joint.has_loc:
+                obj.delta_location = Vector((lx, ly, lz)) - joint.rest_head_world
+                obj.keyframe_insert("delta_location", index=-1, frame=frame_start + fc)
+            
+            if joint.has_rot:
+                obj.delta_rotation_euler = rx, ry, rz
+                obj.keyframe_insert("delta_rotation_euler", index=-1, frame=frame_start + fc)
+            
+            if root_index == 0:
+                lxp=lx
+                lyp=ly
+                lzp=lz
+            
+        root_index += 1
+
+    joint_index=0
+    for name, joint in b.joints.items():
+        obj = joint.temp
+        obj_first = obj_p[joint_index]
+        print(len(joint.anim_data))
+        for fc in range(len(joint.anim_data)):
+            lx, ly, lz, rx, ry, rz = joint.anim_data[fc]
+            
+            if joint.has_loc:
+                obj_first.delta_location = Vector((lx, ly, lz)) - joint.rest_head_world
+                obj_first.keyframe_insert("delta_location", index=-1, frame=frame_start + fc + fcprev)
+            
+            if joint.has_rot:
+                obj_first.delta_rotation_euler = rx, ry, rz
+                obj_first.keyframe_insert("delta_rotation_euler", index=-1, frame=frame_start + fc + fcprev)
+        joint_index+=1
+
+class GenerateJointAndBoneConcat(bpy.types.Operator):
+    '''Generate JointBone'''
+    bl_idname = "ldops.generate_concat_bone"
+    bl_label = "Generate Concat Bone"
+
+    def execute(self, context):
+        scene = context.scene
+        if DataManager.current_bvh_object == None:
+            return {'FINISHED'}
+        if DataManager.current_bvh_object_concat == None:
+            return {'FINISHED'}
+
+        current_bvh = DataManager.current_bvh_object
+        current_bvh_concat = DataManager.current_bvh_object_concat
+
+        add_concat_joint(current_bvh,current_bvh_concat,context, scene.frame_start)
+        return {'FINISHED'}
 
 class DrawBvhInitial(bpy.types.Operator):
     bl_idname = "ldops.draw_bvh_initial"
@@ -92,29 +215,29 @@ class DrawBvhInitial(bpy.types.Operator):
             return {'FINISHED'}
 
         current_bvh = DataManager.current_bvh_object
-        Path,Points,Points_ori = current_bvh.getRootJointPath()
+        path,source_points,original_points = current_bvh.getRootJointPath()
 
         # create the Curve Datablock
         curveData = bpy.data.curves.new('PathCurve', type='CURVE')
 
         curveData_ori = bpy.data.curves.new('PathCurve-original', type='CURVE')
 
-        for i, coord in enumerate(Path):
+        for i, coord in enumerate(path):
             x,y,z = coord
             bpy.ops.mesh.primitive_cube_add(size=3.0,location=(x, y, z))
 
         # map coords to spline
         polyline = curveData.splines.new('POLY')
-        polyline.points.add(len(Points)-1)
+        polyline.points.add(len(source_points)-1)
 
-        for i, coord in enumerate(Points):
+        for i, coord in enumerate(source_points):
             x,y,z = coord
             polyline.points[i].co=(x,y,z,0)
 
         polyline_ori = curveData_ori.splines.new('POLY')
-        polyline_ori.points.add(len(Points_ori)-1)
+        polyline_ori.points.add(len(original_points)-1)
 
-        for i, coord in enumerate(Points_ori):
+        for i, coord in enumerate(original_points):
             x,y,z = coord
             polyline_ori.points[i].co=(x,y,z,0)
 
@@ -146,9 +269,9 @@ def float_range(start, stop, step):
         yield float(start)
         start += decimal.Decimal(step)
 
-def calc_path(coords):
+def calc_path(coords,timestamp):
     points = []
-    fr = float_range(0,1,1.0/200.0)
+    fr = float_range(0,1,1.0/timestamp)
     for t in list(fr):
         point = Vector((0, 0, 0))
         for index in range(4):
@@ -159,25 +282,22 @@ def calc_path(coords):
     return points
 
 
-def loc_change():
+# def loc_change():
+#     for i in range(SplineBvhContainer.index):
+#         for j in range(len(SplineBvhContainer.index[i])):
+#             loc = Vector((SplineBvhContainer.spline_list[i][j].location.x,
+#                             SplineBvhContainer.spline_list[i][j].location.y,
+#                             SplineBvhContainer.spline_list[i][j].location.z))
 
-    for i in range(SplineBvhContainer.index):
-        for j in range(4):
-            loc = Vector((SplineBvhContainer.spline_list[i][j].location.x,
-                            SplineBvhContainer.spline_list[i][j].location.y,
-                            SplineBvhContainer.spline_list[i][j].location.z))
-            dloc = loc - SplineBvhContainer.spline_list_preserve[i][j]
-
-            coords = [SplineBvhContainer.spline_list[i][0].location,SplineBvhContainer.spline_list[i][1].location
-                     ,SplineBvhContainer.spline_list[i][2].location,SplineBvhContainer.spline_list[i][3].location]
-            if dloc.length > 1.0e-4:
-                Points = calc_path(coords)
-                for k, coord in enumerate(Points):
-                    x,y,z = coord
-                    SplineBvhContainer.curve_object_list[i].data.splines[0].points[k].co = (x,y,z,0)
-                SplineBvhContainer.spline_list_preserve[i][j] = loc
+#             coords = [SplineBvhContainer.spline_list[i][0].location,SplineBvhContainer.spline_list[i][1].location
+#                      ,SplineBvhContainer.spline_list[i][2].location,SplineBvhContainer.spline_list[i][3].location]
+#             if dloc.length > 1.0e-4:
+#                 Points = calc_path(coords,200)
+#                 for k, coord in enumerate(Points):
+#                     x,y,z = coord
+#                     SplineBvhContainer.curve_object_list[i].data.splines[0].points[k].co = (x,y,z,0)
     
-    return 0.02
+#     return 0.02
 
 class CreateSpline(bpy.types.Operator):
     bl_idname = "ldops.create_spline"
@@ -186,7 +306,7 @@ class CreateSpline(bpy.types.Operator):
     def execute(self, context):
         if(SplineBvhContainer.function_added == 0):
             SplineBvhContainer.function_added = 1
-            bpy.app.timers.register(loc_change)
+            # bpy.app.timers.register(loc_change)
             bpy.ops.object.select_all(action='DESELECT')
             bpy.data.objects['Cube'].select_set(True)
             bpy.ops.object.delete()
@@ -195,13 +315,12 @@ class CreateSpline(bpy.types.Operator):
         collection = bpy.data.collections.new("Cubes" + str(SplineBvhContainer.index))
         master_collection.children.link(collection)
 
-        coords = [(4,1,0), (8,1,0), (6,0,0), (10,0,0)]
+        coords = [(30,0,5), (30,30,40), (30,0,75), (30,30,110)]
 
         cube_list = []
-        cube_list_preserve = []
         for i, coord in enumerate(coords):
             x,y,z = coord
-            bpy.ops.mesh.primitive_cube_add(size=2.0,location=(x, y, z))
+            bpy.ops.mesh.primitive_cube_add(size=1.0,location=(x, y, z))
             ob = bpy.context.object
             ob.data.name = 'CubeMesh' + str(SplineBvhContainer.index) + '_' + str(i)
             ob.name = 'Cube' + str(SplineBvhContainer.index) + '_' + str(i)
@@ -209,16 +328,14 @@ class CreateSpline(bpy.types.Operator):
             bpy.context.view_layer.active_layer_collection.collection.objects.unlink(ob)
             cube_list.append(ob)
             loc = Vector((ob.location.x, ob.location.y, ob.location.z))
-            cube_list_preserve.append(loc)
         
         SplineBvhContainer.spline_list.append(cube_list)
-        SplineBvhContainer.spline_list_preserve.append(cube_list_preserve)
         SplineBvhContainer.index += 1
 
         # create the Curve Datablock
         curveData = bpy.data.curves.new('UserCurve', type='CURVE')
 
-        Points = calc_path(coords)
+        Points = calc_path(coords,200)
 
         # map coords to spline
         polyline = curveData.splines.new('POLY')
@@ -240,52 +357,24 @@ class AddPoint(bpy.types.Operator):
 
     def execute(self, context):
         scene = context.scene
-        
-        for spline in SplineBvhContainer.spline_list:
-            for i in range(4):
-                print(spline[i].name)
-                print(spline[i].location)
-        for spline in SplineBvhContainer.spline_list_preserve:
-            for i in range(4):
-                print(spline[i])
-        '''
-        for obj in bpy.data.objects:
-            print(obj.name)
-            if("Curve" in obj.name):
-                if bpy.context.view_layer.objects.active == obj:
-                    splines = obj.data.splines[0]
-                    length = len(splines.bezier_points)
+        spline_list = SplineBvhContainer.spline_list
+        for spline in spline_list:
+            for i in range(len(spline)):
+                if bpy.context.view_layer.objects.active == spline[i]:
+                    collectionCube = None
+                    for col in bpy.data.collections:
+                        for obj in col.all_objects:
+                            if bpy.context.view_layer.objects.active == obj:
+                                collectionCube=col
+                    bpy.ops.mesh.primitive_cube_add(size=1.0,location=(spline[-1].location.x, spline[-1].location.y, spline[-1].location.z+10))
+                    ob = bpy.context.object
+                    ob.data.name = 'CubeMesh' + str(SplineBvhContainer.index) + '_' + str(i)
+                    ob.name = 'Cube' + str(SplineBvhContainer.index) + '_' + str(i)
+                    collectionCube.objects.link(ob)
+                    bpy.context.view_layer.active_layer_collection.collection.objects.unlink(ob)
+                    spline.append(ob)
 
-                    if length >= 2:
-                        prev2 = splines.bezier_points[length - 2]
-                        prev1 = splines.bezier_points[length - 1]
 
-                        splines.bezier_points.add(1)
-                        tmpVector = prev1.co - prev2.co
-                        dirVector = Vector((tmpVector[0],tmpVector[1],tmpVector[2]))
-                        dirVector = dirVector.normalized()*2.0
-                        splines.bezier_points[length].co = splines.bezier_points[length-1].co + dirVector
-                        splines.bezier_points[length].handle_left = splines.bezier_points[length-1].co + dirVector * 0.75
-                        splines.bezier_points[length].handle_left_type = 'AUTO'
-                        splines.bezier_points[length].handle_right = splines.bezier_points[length-1].co + dirVector * 1.25
-                        splines.bezier_points[length].handle_right_type = 'AUTO'
-                        print("found")
-                    else:
-                        prev1 = splines.bezier_points[length - 1]
-                        dirVector = Vector((2,0,0))
-                        splines.bezier_points.add(1)
-                        splines.bezier_points[length].co = splines.bezier_points[length-1].co + dirVector
-                        splines.bezier_points[length].handle_left = splines.bezier_points[length-1].co + dirVector * 0.75
-                        splines.bezier_points[length].handle_left_type = 'AUTO'
-                        splines.bezier_points[length].handle_right = splines.bezier_points[length-1].co + dirVector * 1.25
-                        splines.bezier_points[length].handle_right_type = 'AUTO'
-
-                    bpy.ops.object.mode_set(mode='OBJECT')
-                    bpy.ops.object.select_all(action='DESELECT')
-                    bpy.context.view_layer.objects.active = obj
-                    obj.select_set(True)
-                    bpy.ops.object.mode_set(mode='EDIT')
-        '''
         return {'FINISHED'}
 
 class DelPoint(bpy.types.Operator):
@@ -295,56 +384,15 @@ class DelPoint(bpy.types.Operator):
     def execute(self, context):
         scene = context.scene
         
-        # print all objects
-        for obj in bpy.data.objects:
-            print(obj.name)
-            if("Curve" in obj.name):
-                if bpy.context.view_layer.objects.active == obj:
-                    splineOri = obj.data.splines[0]
-                    length = len(splineOri.bezier_points)
-
-                    if length >= 2:
-                        index = length - 1 # index of bez point to remove.
-                        x = [0] * length * 3 # flat list of vectors
-                        hr = x[:]
-                        hl = x[:]
-                        auto = ['AUTO'] * length * 3
-                        splineOri.bezier_points.foreach_get("co", x)
-                        splineOri.bezier_points.foreach_get("handle_left", hl)
-                        splineOri.bezier_points.foreach_get("handle_right", hr)
-                        print(len(x))
-                        # pop off index 0
-                        for i in range(3):
-                            j = 3 * index
-                            x.pop(j)
-                            hl.pop(j)
-                            hr.pop(j)
-                            auto.pop(j)
-
-                        # one less for removed, one more less for splines new
-                        length -= 2 
-
-                        # add a new spline
-                        splineNew = obj.data.splines.new('BEZIER')
-
-                        splineNew.bezier_points.add(length)
-                        splineNew.bezier_points.foreach_set("co", x)
-                        splineNew.bezier_points.foreach_set("handle_left", hl)
-                        splineNew.bezier_points.foreach_set("handle_right", hr)
-
-                        for i in range(len(splineNew.bezier_points)):
-                            splineNew.bezier_points[i].handle_left_type = 'AUTO'
-                            splineNew.bezier_points[i].handle_right_type = 'AUTO'
-
-                        #remove spline 0
-                        obj.data.splines.remove(splineOri)
-
-
-                    bpy.ops.object.mode_set(mode='OBJECT')
-                    bpy.ops.object.select_all(action='DESELECT')
-                    bpy.context.view_layer.objects.active = obj
-                    obj.select_set(True)
-                    bpy.ops.object.mode_set(mode='EDIT')
+        spline_list = SplineBvhContainer.spline_list
+        for spline in spline_list:
+            for i in range(len(spline)):
+                if bpy.context.view_layer.objects.active == spline[i]:
+                    if len(spline) > 4:
+                        bpy.ops.object.select_all(action='DESELECT')
+                        spline[-1].select_set(True)
+                        bpy.ops.object.delete()
+                        del spline[-1]
 
         return {'FINISHED'}
 
@@ -352,6 +400,7 @@ def register():
     bpy.utils.register_class(SetPath)
     bpy.utils.register_class(ImportBvh)
     bpy.utils.register_class(GenerateJointAndBone)
+    #bpy.utils.register_class(GenerateJointAndBoneConcat)
     bpy.utils.register_class(DrawBvhInitial)
     bpy.utils.register_class(CreateSpline)
     bpy.utils.register_class(AddPoint)
@@ -361,6 +410,7 @@ def unregister():
     bpy.utils.unregister_class(SetPath)
     bpy.utils.unregister_class(ImportBvh)
     bpy.utils.unregister_class(GenerateJointAndBone)
+    #bpy.utils.unregister_class(GenerateJointAndBoneConcat)
     bpy.utils.unregister_class(DrawBvhInitial)
     bpy.utils.unregister_class(CreateSpline)
     bpy.utils.unregister_class(AddPoint)
